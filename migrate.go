@@ -376,7 +376,7 @@ func checkFields(b body) error {
 		if column, exist := b.dbTable.columns[att.Name]; exist {
 			column.migrated = true
 			// change from many to one to one to one
-			if _, unique := checkFkUnique(b.conn, b.table.Name, att.Name); !unique {
+			if unique := checkFkUnique(b.conn, b.table.Name, att.Name); !unique {
 				if foreignKeyIsPrimarykey(b.table, att.Name) {
 					continue
 				}
@@ -394,7 +394,7 @@ func checkFields(b body) error {
 		if column, exist := b.dbTable.columns[att.Name]; exist {
 			column.migrated = true
 			// change from one to one to many to one
-			if _, unique := checkFkUnique(b.conn, b.table.Name, att.Name); unique {
+			if unique := checkFkUnique(b.conn, b.table.Name, att.Name); unique {
 				return alterSqlite(b)
 			}
 			if column.nullable != att.Nullable {
@@ -500,25 +500,7 @@ func countAttributes(t *goe.TableMigrate) int {
 	return len(t.PrimaryKeys) + len(t.Attributes) + len(t.ManyToOnes) + len(t.OneToOnes)
 }
 
-func oldTableAttributes(conn *sql.DB, tableName string) string {
-	rows, _ := conn.Query("SELECT name FROM pragma_table_info($1);", tableName)
-	defer rows.Close()
-
-	s := make([]string, 0)
-	var column string
-	for rows.Next() {
-		rows.Scan(&column)
-		s = append(s, column)
-	}
-
-	column = s[0]
-	for _, c := range s[1:] {
-		column += "," + c
-	}
-	return column
-}
-
-func checkFkUnique(conn *sql.DB, table, attribute string) (string, bool) {
+func checkFkUnique(conn *sql.DB, table, attribute string) bool {
 	sql := `
 	WITH index_list AS (
 		SELECT
@@ -539,18 +521,14 @@ func checkFkUnique(conn *sql.DB, table, attribute string) (string, bool) {
 		WHERE ii.name = $2
 	)
 	SELECT DISTINCT
-		il.index_name,
-		il.is_unique,
-		$1 AS table_name,
-		ic.column_name
+		il.is_unique
 	FROM index_list il
 	JOIN index_columns ic ON il.index_name = ic.index_name;`
 
 	var b bool
-	var s string
 	row := conn.QueryRowContext(context.Background(), sql, table, attribute)
-	row.Scan(&s, &b)
-	return s, b
+	row.Scan(&b)
+	return b
 }
 
 func addColumn(table, column, dataType string, nullable bool) string {
