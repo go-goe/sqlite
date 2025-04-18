@@ -67,24 +67,24 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 	sql.WriteString(sqlColumns.String())
 
 	if sql.Len() != 0 {
-		return db.NewConnection().ExecContext(ctx, model.Query{Type: enum.RawQuery, RawSql: sql.String()})
+		return db.NewConnection().ExecContext(ctx, &model.Query{Type: enum.RawQuery, RawSql: sql.String()})
 	}
 	return nil
 }
 
 func (db *Driver) DropTable(table string) error {
 	sql := fmt.Sprintf("DROP TABLE IF EXISTS %v;", table)
-	return db.NewConnection().ExecContext(context.Background(), model.Query{Type: enum.RawQuery, RawSql: sql})
+	return db.NewConnection().ExecContext(context.Background(), &model.Query{Type: enum.RawQuery, RawSql: sql})
 }
 
 func (db *Driver) RenameColumn(table, oldColumn, newColumn string) error {
 	sql := renameColumn(table, oldColumn, newColumn)
-	return db.NewConnection().ExecContext(context.Background(), model.Query{Type: enum.RawQuery, RawSql: sql})
+	return db.NewConnection().ExecContext(context.Background(), &model.Query{Type: enum.RawQuery, RawSql: sql})
 }
 
 func (db *Driver) DropColumn(table, column string) error {
 	sql := dropColumn(table, column)
-	return db.NewConnection().ExecContext(context.Background(), model.Query{Type: enum.RawQuery, RawSql: sql})
+	return db.NewConnection().ExecContext(context.Background(), &model.Query{Type: enum.RawQuery, RawSql: sql})
 }
 
 func renameColumn(table, oldColumnName, newColumnName string) string {
@@ -453,7 +453,7 @@ func alterSqlite(b body) error {
 	sqlBuilder.WriteString("DROP TABLE" + b.table.EscapingName + ";\n")
 	sqlBuilder.WriteString(fmt.Sprintf("ALTER TABLE %v RENAME TO %v;\n", newTable.EscapingName, b.table.EscapingName))
 	sqlBuilder.WriteString("PRAGMA foreign_keys=ON; COMMIT;")
-	return b.driver.NewConnection().ExecContext(context.Background(), model.Query{Type: enum.RawQuery, RawSql: sqlBuilder.String()})
+	return b.driver.NewConnection().ExecContext(context.Background(), &model.Query{Type: enum.RawQuery, RawSql: sqlBuilder.String()})
 }
 
 func tableAttributes(t *goe.TableMigrate, conn *sql.DB, tableName string) (string, string) {
