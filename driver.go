@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-goe/goe"
 	"github.com/go-goe/goe/model"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type Driver struct {
@@ -33,7 +33,7 @@ func Open(dns string, config Config) (driver *Driver) {
 
 func (dr *Driver) Init() error {
 	var err error
-	dr.sql, err = sql.Open("sqlite3", dr.dns)
+	dr.sql, err = sql.Open("sqlite", dr.dns)
 	if err != nil {
 		// logged by goe
 		return err
