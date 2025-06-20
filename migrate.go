@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -38,8 +39,22 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 	}
 
 	sql := new(strings.Builder)
-	sqlColumns := new(strings.Builder)
 	var err error
+	rx := regexp.MustCompile(`[^/]+\.db`)
+	currentDb := rx.FindString(db.dns)
+	for _, s := range migrator.Schemes {
+		sql.WriteString(fmt.Sprintf("ATTACH DATABASE '%v' AS %v;\n", strings.Replace(db.dns, currentDb, s[1:len(s)-1]+".db", 1), s))
+	}
+	// attach all databases to connection
+	if sql.Len() != 0 {
+		err = db.rawExecContext(ctx, sql.String())
+		if err != nil {
+			return err
+		}
+	}
+	sql.Reset()
+
+	sqlColumns := new(strings.Builder)
 	for _, t := range migrator.Tables {
 		err = checkTableChanges(body{
 			table:   t,
@@ -90,10 +105,12 @@ func wrapperExec(ctx context.Context, conn goe.Connection, query *model.Query) e
 }
 
 func (db *Driver) DropTable(table string) error {
+	// todo add scheme
 	return db.rawExecContext(context.TODO(), fmt.Sprintf("DROP TABLE IF EXISTS %v;", table))
 }
 
 func (db *Driver) RenameColumn(table, oldColumn, newColumn string) error {
+	// todo add scheme
 	return db.rawExecContext(context.TODO(), renameColumn(table, oldColumn, newColumn))
 }
 
@@ -131,13 +148,24 @@ type dbTable struct {
 }
 
 func checkTableChanges(b body) error {
-	sqlTableInfos := `SELECT
-    name AS column_name,
-    lower(type) AS data_type,
-    dflt_value AS column_default,
-	NOT "notnull" AS is_nullable
-	FROM pragma_table_info($1);
-	`
+	var sqlTableInfos string
+	if b.table.Scheme != nil {
+		sqlTableInfos = fmt.Sprintf(`SELECT
+		name AS column_name,
+		lower(type) AS data_type,
+		dflt_value AS column_default,
+		NOT "notnull" AS is_nullable
+		FROM %v.pragma_table_info($1);
+		`, *b.table.Scheme)
+	} else {
+		sqlTableInfos = `SELECT
+		name AS column_name,
+		lower(type) AS data_type,
+		dflt_value AS column_default,
+		NOT "notnull" AS is_nullable
+		FROM pragma_table_info($1);
+		`
+	}
 
 	rows, err := b.conn.QueryContext(context.Background(), sqlTableInfos, b.table.Name)
 	if err != nil {
@@ -184,7 +212,7 @@ func foreignKeyIsPrimarykey(table *goe.TableMigrate, attName string) bool {
 
 func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, tables map[string]*goe.TableMigrate, skipDependency bool) {
 	t := table{}
-	t.name = fmt.Sprintf("CREATE TABLE %v (", tbl.EscapingName)
+	t.name = fmt.Sprintf("CREATE TABLE %v (", tbl.EscapingTableName())
 	for _, att := range tbl.PrimaryKeys {
 		if primaryKeyIsForeignKey(tbl, att.Name) {
 			continue
@@ -248,7 +276,7 @@ func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]string) strin
 			return "NULL"
 		}
 		return "NOT NULL"
-	}(), att.EscapingTargetTable, att.EscapingTargetColumn)
+	}(), att.EscapingTargetTableName(), att.EscapingTargetColumn)
 }
 
 func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]string) string {
@@ -261,7 +289,7 @@ func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]string) string 
 				return "NULL"
 			}
 			return "NOT NULL"
-		}(), att.EscapingTargetTable, att.EscapingTargetColumn)
+		}(), att.EscapingTargetTableName(), att.EscapingTargetColumn)
 }
 
 type table struct {
@@ -279,14 +307,19 @@ type databaseIndex struct {
 }
 
 func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *strings.Builder, conn *sql.DB) error {
-	sqlQuery := `
+
+	var scheme string
+	if table.Scheme != nil {
+		scheme = *table.Scheme + "."
+	}
+	sqlQuery := fmt.Sprintf(`
 	WITH index_list AS (
 		SELECT
 			name AS index_name,
 			[unique] AS is_unique,
 			origin,
 			partial
-		FROM pragma_index_list($1)
+		FROM %vpragma_index_list($1)
 		WHERE origin != 'pk'  -- exclude primary key
 	),
 	index_columns AS (
@@ -295,7 +328,7 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 			ii.name AS column_name,
 			ii.seqno
 		FROM index_list il
-		JOIN pragma_index_info(il.index_name) ii
+		JOIN %vpragma_index_info(il.index_name) ii
 	)
 	SELECT DISTINCT
 		il.index_name,
@@ -304,7 +337,7 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 		ic.column_name
 	FROM index_list il
 	JOIN index_columns ic ON il.index_name = ic.index_name;
-	`
+	`, scheme, scheme)
 
 	rows, err := conn.QueryContext(context.Background(), sqlQuery, table.Name)
 	if err != nil {
@@ -330,13 +363,17 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 	for i := range indexes {
 		if dbIndex, exist := dis[indexes[i].Name]; exist {
 			if indexes[i].Unique != dbIndex.unique {
-				sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", indexes[i].EscapingName) + "\n")
-				sql.WriteString(createIndex(indexes[i], table.EscapingName))
+				if table.Scheme != nil {
+					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", *table.Scheme+"."+indexes[i].EscapingName) + "\n")
+				} else {
+					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", indexes[i].EscapingName) + "\n")
+				}
+				sql.WriteString(createIndex(indexes[i], table))
 			}
 			dbIndex.migrated = true
 			continue
 		}
-		sql.WriteString(createIndex(indexes[i], table.EscapingName))
+		sql.WriteString(createIndex(indexes[i], table))
 	}
 
 	for _, dbIndex := range dis {
@@ -351,7 +388,7 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 	return nil
 }
 
-func createIndex(index goe.IndexMigrate, table string) string {
+func createIndex(index goe.IndexMigrate, table *goe.TableMigrate) string {
 	return fmt.Sprintf("CREATE %v %v ON %v (%v);\n",
 		func() string {
 			if index.Unique {
@@ -359,8 +396,13 @@ func createIndex(index goe.IndexMigrate, table string) string {
 			}
 			return "INDEX"
 		}(),
-		index.EscapingName,
-		table,
+		func() string {
+			if table.Scheme != nil {
+				return *table.Scheme + "." + index.EscapingName
+			}
+			return index.EscapingName
+		}(),
+		table.EscapingName,
 		func() string {
 			s := fmt.Sprintf("%v", index.Attributes[0].EscapingName)
 			for _, a := range index.Attributes[1:] {
@@ -433,7 +475,7 @@ func checkFields(b body) error {
 			}
 			continue
 		}
-		newColumns = append(newColumns, addColumn(b.table.EscapingName, att.EscapingName, checkDataType(att.DataType, b.dataMap), att.Nullable))
+		newColumns = append(newColumns, addColumn(b.table, att.EscapingName, checkDataType(att.DataType, b.dataMap), att.Nullable))
 	}
 
 	for _, c := range b.dbTable.columns {
@@ -460,12 +502,12 @@ func alterSqlite(b body) error {
 	createTable(&newTable, b.dataMap, sqlBuilder, b.tables, true)
 	sqlBuilder.WriteString(
 		fmt.Sprintf("INSERT INTO %v (%v) SELECT %v FROM %v;\n",
-			newTable.EscapingName,
+			newTable.EscapingTableName(),
 			newColumns,
 			oldColumns,
-			b.table.EscapingName))
-	sqlBuilder.WriteString("DROP TABLE" + b.table.EscapingName + ";\n")
-	sqlBuilder.WriteString(fmt.Sprintf("ALTER TABLE %v RENAME TO %v;\n", newTable.EscapingName, b.table.EscapingName))
+			b.table.EscapingTableName()))
+	sqlBuilder.WriteString("DROP TABLE" + b.table.EscapingTableName() + ";\n")
+	sqlBuilder.WriteString(fmt.Sprintf("ALTER TABLE %v RENAME TO %v;\n", newTable.EscapingTableName(), b.table.EscapingTableName()))
 	sqlBuilder.WriteString("PRAGMA foreign_keys=ON; COMMIT;")
 	return b.driver.NewConnection().ExecContext(context.Background(), &model.Query{Type: enum.RawQuery, RawSql: sqlBuilder.String()})
 }
@@ -545,8 +587,8 @@ func checkFkUnique(conn *sql.DB, table, attribute string) bool {
 	return b
 }
 
-func addColumn(table, column, dataType string, nullable bool) string {
-	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v %v;\n", table, column, dataType,
+func addColumn(table *goe.TableMigrate, column, dataType string, nullable bool) string {
+	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v %v;\n", table.EscapingTableName(), column, dataType,
 		func() string {
 			if nullable {
 				return "NULL"
