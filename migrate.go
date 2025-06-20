@@ -276,7 +276,7 @@ func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]string) strin
 			return "NULL"
 		}
 		return "NOT NULL"
-	}(), att.EscapingTargetTableName(), att.EscapingTargetColumn)
+	}(), att.EscapingTargetTable, att.EscapingTargetColumn)
 }
 
 func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]string) string {
@@ -289,7 +289,7 @@ func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]string) string 
 				return "NULL"
 			}
 			return "NOT NULL"
-		}(), att.EscapingTargetTableName(), att.EscapingTargetColumn)
+		}(), att.EscapingTargetTable, att.EscapingTargetColumn)
 }
 
 type table struct {
@@ -598,11 +598,12 @@ func addColumn(table *goe.TableMigrate, column, dataType string, nullable bool) 
 }
 
 func checkDataType(structDataType string, dataMap map[string]string) string {
-	if structDataType == "int8" || structDataType == "uint8" || structDataType == "uint16" {
+	switch structDataType {
+	case "int8", "uint8", "uint16":
 		structDataType = "int16"
-	} else if structDataType == "int" || structDataType == "uint" || structDataType == "uint32" {
+	case "int", "uint", "uint32":
 		structDataType = "int32"
-	} else if structDataType == "uint64" {
+	case "uint64":
 		structDataType = "int64"
 	}
 	if dataMap[structDataType] != "" {

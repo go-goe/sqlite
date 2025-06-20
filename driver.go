@@ -63,29 +63,30 @@ func (dr *Driver) Close() error {
 }
 
 func (dr *Driver) NewConnection() goe.Connection {
-	return Connection{sql: dr.sql, config: dr.Config}
+	return Connection{sql: dr.sql, config: dr.Config, dns: dr.dns}
 }
 
 type Connection struct {
+	dns    string
 	config Config
 	sql    *sql.DB
 }
 
 func (c Connection) QueryContext(ctx context.Context, query *model.Query) (goe.Rows, error) {
-	buildSql(query)
+	buildSql(query, c.sql, c.dns)
 	rows, err := c.sql.QueryContext(ctx, query.RawSql, query.Arguments...)
 	return Rows{rows: rows}, err
 }
 
 func (c Connection) QueryRowContext(ctx context.Context, query *model.Query) goe.Row {
-	buildSql(query)
+	buildSql(query, c.sql, c.dns)
 	row := c.sql.QueryRowContext(ctx, query.RawSql, query.Arguments...)
 
 	return Row{row: row}
 }
 
 func (c Connection) ExecContext(ctx context.Context, query *model.Query) error {
-	buildSql(query)
+	buildSql(query, c.sql, c.dns)
 	_, err := c.sql.ExecContext(ctx, query.RawSql, query.Arguments...)
 
 	return err
@@ -93,27 +94,28 @@ func (c Connection) ExecContext(ctx context.Context, query *model.Query) error {
 
 func (dr *Driver) NewTransaction(ctx context.Context, opts *sql.TxOptions) (goe.Transaction, error) {
 	tx, err := dr.sql.BeginTx(ctx, opts)
-	return Transaction{tx: tx, config: dr.Config}, err
+	return Transaction{tx: tx, config: dr.Config, dns: dr.dns}, err
 }
 
 type Transaction struct {
+	dns    string
 	config Config
 	tx     *sql.Tx
 }
 
 func (t Transaction) QueryContext(ctx context.Context, query *model.Query) (goe.Rows, error) {
-	buildSql(query)
+	buildSql(query, t.tx, t.dns)
 	rows, err := t.tx.QueryContext(ctx, query.RawSql, query.Arguments...)
 	return Rows{rows: rows}, err
 }
 
 func (t Transaction) QueryRowContext(ctx context.Context, query *model.Query) goe.Row {
-	buildSql(query)
+	buildSql(query, t.tx, t.dns)
 	return Row{row: t.tx.QueryRowContext(ctx, query.RawSql, query.Arguments...)}
 }
 
 func (t Transaction) ExecContext(ctx context.Context, query *model.Query) error {
-	buildSql(query)
+	buildSql(query, t.tx, t.dns)
 	_, err := t.tx.ExecContext(ctx, query.RawSql, query.Arguments...)
 
 	return err
