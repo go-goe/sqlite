@@ -62,44 +62,7 @@ func buildSql(query *model.Query, pool connection, dns string) {
 		query.RawSql = buildDelete(query, &schemes)
 	}
 
-	myQuery := struct {
-		Id     int
-		Scheme string
-		File   string
-	}{}
-	mySchemes := make([]struct {
-		Id     int
-		Scheme string
-		File   string
-	}, 0)
-	rows, err := pool.Query("PRAGMA database_list;")
-	if err != nil {
-		return
-	}
-	rx := regexp.MustCompile(`[^/]+\.db`)
-	currentDb := rx.FindString(dns)
-
-	for rows.Next() {
-		rows.Scan(&myQuery.Id, &myQuery.Scheme, &myQuery.File)
-		mySchemes = append(mySchemes, myQuery)
-	}
-
-	schemeBuilders := strings.Builder{}
-	for s := range schemes {
-		if !slices.ContainsFunc(mySchemes, func(mq struct {
-			Id     int
-			Scheme string
-			File   string
-		}) bool {
-			return s[1:len(s)-1] == mq.Scheme
-		}) {
-			schemeBuilders.WriteString(fmt.Sprintf("ATTACH DATABASE '%v' AS %v;\n", strings.Replace(dns, currentDb, s[1:len(s)-1]+".db", 1), s))
-		}
-	}
-
-	if schemeBuilders.Len() != 0 {
-		pool.Exec(schemeBuilders.String())
-	}
+	checkAttach(pool, dns, schemes)
 }
 
 func buildSelect(query *model.Query, schemes *map[string]bool) string {
@@ -299,4 +262,44 @@ func writeWhereInArgument(where *model.Where, builder *strings.Builder, query *m
 		query.WhereIndex++
 	}
 	builder.WriteByte(')')
+}
+
+func checkAttach(pool connection, dns string, schemes map[string]bool) {
+	myQuery := struct {
+		Id     int
+		Scheme string
+		File   string
+	}{}
+	mySchemes := make([]struct {
+		Id     int
+		Scheme string
+		File   string
+	}, 0)
+	rows, err := pool.Query("PRAGMA database_list;")
+	if err != nil {
+		return
+	}
+	rx := regexp.MustCompile(`[^/]+\.db`)
+	currentDb := rx.FindString(dns)
+
+	for rows.Next() {
+		rows.Scan(&myQuery.Id, &myQuery.Scheme, &myQuery.File)
+		mySchemes = append(mySchemes, myQuery)
+	}
+
+	schemeBuilders := strings.Builder{}
+	for s := range schemes {
+		if !slices.ContainsFunc(mySchemes, func(mq struct {
+			Id     int
+			Scheme string
+			File   string
+		}) bool {
+			return s[1:len(s)-1] == mq.Scheme
+		}) {
+			schemeBuilders.WriteString(fmt.Sprintf("ATTACH DATABASE '%v' AS %v;\n", strings.Replace(dns, currentDb, s[1:len(s)-1]+".db", 1), s))
+		}
+	}
+	if schemeBuilders.Len() != 0 {
+		pool.Exec(schemeBuilders.String())
+	}
 }
