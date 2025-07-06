@@ -237,13 +237,13 @@ func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.
 
 	for _, att := range tbl.Attributes {
 		att.DataType = checkDataType(att.DataType, dataMap)
-		t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v %v,", att.EscapingName, att.DataType, func() string {
+		t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v %v %v,", att.EscapingName, att.DataType, func() string {
 			if att.Nullable {
 				return "NULL"
 			} else {
 				return "NOT NULL"
 			}
-		}()))
+		}(), setDefault(att.Default)))
 	}
 
 	for _, att := range tbl.OneToOnes {
@@ -277,6 +277,14 @@ func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.
 	}
 	t.createPk += ")"
 	createTableSql(t.name, t.createPk, t.createAttrs, sql)
+}
+
+func setDefault(d string) string {
+	if d == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("DEFAULT %v", d)
 }
 
 func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]string) string {
@@ -483,6 +491,12 @@ func checkFields(b body) error {
 			if column.nullable != att.Nullable {
 				return alterSqlite(b)
 			}
+			if column.defaultValue != nil && *column.defaultValue != setDefault(att.Default)[8:] {
+				return alterSqlite(b)
+			}
+			if att.Default != "" && column.defaultValue == nil {
+				return alterSqlite(b)
+			}
 			continue
 		}
 		newColumns = append(newColumns, addColumn(b.table, att.EscapingName, checkDataType(att.DataType, b.dataMap), att.Nullable))
@@ -517,7 +531,7 @@ func alterSqlite(b body) error {
 			oldColumns,
 			b.table.EscapingTableName()))
 	sqlBuilder.WriteString("DROP TABLE" + b.table.EscapingTableName() + ";\n")
-	sqlBuilder.WriteString(fmt.Sprintf("ALTER TABLE %v RENAME TO %v;\n", newTable.EscapingTableName(), b.table.EscapingTableName()))
+	sqlBuilder.WriteString(fmt.Sprintf("ALTER TABLE %v RENAME TO %v;\n", newTable.EscapingTableName(), b.table.EscapingName))
 	sqlBuilder.WriteString("PRAGMA foreign_keys=ON; COMMIT;")
 	return b.driver.NewConnection().ExecContext(context.Background(), &model.Query{Type: enum.RawQuery, RawSql: sqlBuilder.String()})
 }
