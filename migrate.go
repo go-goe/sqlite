@@ -491,10 +491,18 @@ func checkFields(b body) error {
 			if column.nullable != att.Nullable {
 				return alterSqlite(b)
 			}
-			if column.defaultValue != nil && *column.defaultValue != setDefault(att.Default)[8:] {
-				return alterSqlite(b)
+			if column.defaultValue != nil {
+				if att.Default == "" {
+					// drop default
+					return alterSqlite(b)
+				}
+				if *column.defaultValue != setDefault(att.Default)[8:] {
+					// update default
+					return alterSqlite(b)
+				}
 			}
 			if att.Default != "" && column.defaultValue == nil {
+				// create default
 				return alterSqlite(b)
 			}
 			continue
@@ -570,7 +578,7 @@ func tableAttributes(t *goe.TableMigrate, conn *sql.DB, tableName string) (strin
 			oldColumn += "," + c
 		}
 
-		return newColumns, oldColumn
+		return oldColumn, oldColumn
 	}
 
 	return newColumns, newColumns
