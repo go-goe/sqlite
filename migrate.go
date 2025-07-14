@@ -42,7 +42,7 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 	var err error
 	rx := regexp.MustCompile(`[^/]+\.db`)
 	currentDb := rx.FindString(db.dns)
-	for _, s := range migrator.Schemes {
+	for _, s := range migrator.Schemas {
 		sql.WriteString(fmt.Sprintf("ATTACH DATABASE '%v' AS %v;\n", strings.Replace(db.dns, currentDb, s[1:len(s)-1]+".db", 1), s))
 	}
 	// attach all databases to connection
@@ -104,26 +104,26 @@ func wrapperExec(ctx context.Context, conn goe.Connection, query *model.Query) e
 	return conn.ExecContext(ctx, query)
 }
 
-func (db *Driver) DropTable(scheme, table string) error {
-	if len(scheme) > 2 {
-		table = scheme + "." + table
-		checkAttach(db.sql, db.dns, map[string]bool{scheme[1 : len(scheme)-1]: true})
+func (db *Driver) DropTable(schema, table string) error {
+	if len(schema) > 2 {
+		table = schema + "." + table
+		checkAttach(db.sql, db.dns, map[string]bool{schema[1 : len(schema)-1]: true})
 	}
 	return db.rawExecContext(context.TODO(), fmt.Sprintf("DROP TABLE IF EXISTS %v;", table))
 }
 
-func (db *Driver) RenameColumn(scheme, table, oldColumn, newColumn string) error {
-	if len(scheme) > 2 {
-		table = scheme + "." + table
-		checkAttach(db.sql, db.dns, map[string]bool{scheme[1 : len(scheme)-1]: true})
+func (db *Driver) RenameColumn(schema, table, oldColumn, newColumn string) error {
+	if len(schema) > 2 {
+		table = schema + "." + table
+		checkAttach(db.sql, db.dns, map[string]bool{schema[1 : len(schema)-1]: true})
 	}
 	return db.rawExecContext(context.TODO(), renameColumn(table, oldColumn, newColumn))
 }
 
-func (db *Driver) DropColumn(scheme, table, column string) error {
-	if len(scheme) > 2 {
-		table = scheme + "." + table
-		checkAttach(db.sql, db.dns, map[string]bool{scheme[1 : len(scheme)-1]: true})
+func (db *Driver) DropColumn(schema, table, column string) error {
+	if len(schema) > 2 {
+		table = schema + "." + table
+		checkAttach(db.sql, db.dns, map[string]bool{schema[1 : len(schema)-1]: true})
 	}
 	return db.rawExecContext(context.TODO(), dropColumn(table, column))
 }
@@ -159,14 +159,14 @@ type dbTable struct {
 
 func checkTableChanges(b body) error {
 	var sqlTableInfos string
-	if b.table.Scheme != nil {
+	if b.table.Schema != nil {
 		sqlTableInfos = fmt.Sprintf(`SELECT
 		name AS column_name,
 		lower(type) AS data_type,
 		dflt_value AS column_default,
 		NOT "notnull" AS is_nullable
 		FROM %v.pragma_table_info($1);
-		`, *b.table.Scheme)
+		`, *b.table.Schema)
 	} else {
 		sqlTableInfos = `SELECT
 		name AS column_name,
@@ -326,9 +326,9 @@ type databaseIndex struct {
 
 func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *strings.Builder, conn *sql.DB) error {
 
-	var scheme string
-	if table.Scheme != nil {
-		scheme = *table.Scheme + "."
+	var schema string
+	if table.Schema != nil {
+		schema = *table.Schema + "."
 	}
 	sqlQuery := fmt.Sprintf(`
 	WITH index_list AS (
@@ -355,7 +355,7 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 		ic.column_name
 	FROM index_list il
 	JOIN index_columns ic ON il.index_name = ic.index_name;
-	`, scheme, scheme)
+	`, schema, schema)
 
 	rows, err := conn.QueryContext(context.Background(), sqlQuery, table.Name)
 	if err != nil {
@@ -381,8 +381,8 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 	for i := range indexes {
 		if dbIndex, exist := dis[indexes[i].Name]; exist {
 			if indexes[i].Unique != dbIndex.unique {
-				if table.Scheme != nil {
-					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", *table.Scheme+"."+indexes[i].EscapingName) + "\n")
+				if table.Schema != nil {
+					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", *table.Schema+"."+indexes[i].EscapingName) + "\n")
 				} else {
 					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", indexes[i].EscapingName) + "\n")
 				}
@@ -415,8 +415,8 @@ func createIndex(index goe.IndexMigrate, table *goe.TableMigrate) string {
 			return "INDEX"
 		}(),
 		func() string {
-			if table.Scheme != nil {
-				return *table.Scheme + "." + index.EscapingName
+			if table.Schema != nil {
+				return *table.Schema + "." + index.EscapingName
 			}
 			return index.EscapingName
 		}(),

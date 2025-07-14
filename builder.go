@@ -50,22 +50,22 @@ type connection interface {
 }
 
 func buildSql(query *model.Query, pool connection, dns string) {
-	schemes := make(map[string]bool, 0)
+	schemas := make(map[string]bool, 0)
 	switch query.Type {
 	case enum.SelectQuery:
-		query.RawSql = buildSelect(query, &schemes)
+		query.RawSql = buildSelect(query, &schemas)
 	case enum.InsertQuery:
-		query.RawSql = buildInsert(query, &schemes)
+		query.RawSql = buildInsert(query, &schemas)
 	case enum.UpdateQuery:
-		query.RawSql = buildUpdate(query, &schemes)
+		query.RawSql = buildUpdate(query, &schemas)
 	case enum.DeleteQuery:
-		query.RawSql = buildDelete(query, &schemes)
+		query.RawSql = buildDelete(query, &schemas)
 	}
 
-	checkAttach(pool, dns, schemes)
+	checkAttach(pool, dns, schemas)
 }
 
-func buildSelect(query *model.Query, schemes *map[string]bool) string {
+func buildSelect(query *model.Query, schemas *map[string]bool) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("SELECT")
@@ -78,14 +78,14 @@ func buildSelect(query *model.Query, schemes *map[string]bool) string {
 
 	builder.WriteString("FROM")
 	builder.WriteString(query.Tables[0].String())
-	if query.Tables[0].Scheme != nil && !(*schemes)[*query.Tables[0].Scheme] {
-		(*schemes)[*query.Tables[0].Scheme] = true
+	if query.Tables[0].Schema != nil && !(*schemas)[*query.Tables[0].Schema] {
+		(*schemas)[*query.Tables[0].Schema] = true
 	}
 	for _, t := range query.Tables[1:] {
 		builder.WriteByte(',')
 		builder.WriteString(t.String())
-		if t.Scheme != nil && !(*schemes)[*t.Scheme] {
-			(*schemes)[*t.Scheme] = true
+		if t.Schema != nil && !(*schemas)[*t.Schema] {
+			(*schemas)[*t.Schema] = true
 		}
 	}
 
@@ -97,12 +97,12 @@ func buildSelect(query *model.Query, schemes *map[string]bool) string {
 				(j.FirstArgument.Table + "." + j.FirstArgument.Name) + " = " +
 				(j.SecondArgument.Table + "." + j.SecondArgument.Name) + ")",
 		)
-		if j.Table.Scheme != nil && !(*schemes)[*j.Table.Scheme] {
-			(*schemes)[*j.Table.Scheme] = true
+		if j.Table.Schema != nil && !(*schemas)[*j.Table.Schema] {
+			(*schemas)[*j.Table.Schema] = true
 		}
 	}
 
-	writeWhere(query, &builder, schemes)
+	writeWhere(query, &builder, schemas)
 
 	if query.OrderBy != nil {
 		builder.WriteByte('\n')
@@ -125,14 +125,14 @@ func buildSelect(query *model.Query, schemes *map[string]bool) string {
 	return builder.String()
 }
 
-func buildInsert(query *model.Query, schemes *map[string]bool) string {
+func buildInsert(query *model.Query, schemas *map[string]bool) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("INSERT INTO")
 	builder.WriteString(query.Tables[0].String())
 	builder.WriteByte('(')
-	if query.Tables[0].Scheme != nil && !(*schemes)[*query.Tables[0].Scheme] {
-		(*schemes)[*query.Tables[0].Scheme] = true
+	if query.Tables[0].Schema != nil && !(*schemas)[*query.Tables[0].Schema] {
+		(*schemas)[*query.Tables[0].Schema] = true
 	}
 
 	builder.WriteString(query.Attributes[0].Name)
@@ -170,14 +170,14 @@ func buildInsert(query *model.Query, schemes *map[string]bool) string {
 	return builder.String()
 }
 
-func buildUpdate(query *model.Query, schemes *map[string]bool) string {
+func buildUpdate(query *model.Query, schemas *map[string]bool) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("UPDATE")
 	builder.WriteString(query.Tables[0].String())
 	builder.WriteString("SET")
-	if query.Tables[0].Scheme != nil && !(*schemes)[*query.Tables[0].Scheme] {
-		(*schemes)[*query.Tables[0].Scheme] = true
+	if query.Tables[0].Schema != nil && !(*schemas)[*query.Tables[0].Schema] {
+		(*schemas)[*query.Tables[0].Schema] = true
 	}
 
 	i := 1
@@ -187,20 +187,20 @@ func buildUpdate(query *model.Query, schemes *map[string]bool) string {
 		builder.WriteString("," + att.Name + "=$" + strconv.Itoa(i))
 	}
 
-	writeWhere(query, &builder, schemes)
+	writeWhere(query, &builder, schemas)
 
 	return builder.String()
 }
 
-func buildDelete(query *model.Query, schemes *map[string]bool) string {
+func buildDelete(query *model.Query, schemas *map[string]bool) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("DELETE FROM")
 	builder.WriteString(query.Tables[0].String())
-	if query.Tables[0].Scheme != nil && !(*schemes)[*query.Tables[0].Scheme] {
-		(*schemes)[*query.Tables[0].Scheme] = true
+	if query.Tables[0].Schema != nil && !(*schemas)[*query.Tables[0].Schema] {
+		(*schemas)[*query.Tables[0].Schema] = true
 	}
-	writeWhere(query, &builder, schemes)
+	writeWhere(query, &builder, schemas)
 
 	return builder.String()
 }
@@ -217,7 +217,7 @@ func writeAttributes(a model.Attribute) string {
 	return a.Table + "." + a.Name
 }
 
-func writeWhere(query *model.Query, builder *strings.Builder, scheme *map[string]bool) {
+func writeWhere(query *model.Query, builder *strings.Builder, schema *map[string]bool) {
 	if query.WhereOperations != nil {
 		builder.WriteByte('\n')
 		builder.WriteString("WHERE")
@@ -236,11 +236,11 @@ func writeWhere(query *model.Query, builder *strings.Builder, scheme *map[string
 					if w.QueryIn.Arguments != nil {
 						w.QueryIn.WhereIndex = query.WhereIndex
 						query.Arguments = append(query.Arguments[:w.QueryIn.WhereIndex-1], append(w.QueryIn.Arguments, query.Arguments[w.QueryIn.WhereIndex-1:]...)...)
-						builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn, scheme) + ")")
+						builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn, schema) + ")")
 						query.WhereIndex = w.QueryIn.WhereIndex
 						continue
 					}
-					builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn, scheme) + ")")
+					builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn, schema) + ")")
 					continue
 				}
 				writeWhereInArgument(&w, builder, query)
@@ -264,15 +264,15 @@ func writeWhereInArgument(where *model.Where, builder *strings.Builder, query *m
 	builder.WriteByte(')')
 }
 
-func checkAttach(pool connection, dns string, schemes map[string]bool) {
+func checkAttach(pool connection, dns string, schemas map[string]bool) {
 	myQuery := struct {
 		Id     int
-		Scheme string
+		Schema string
 		File   string
 	}{}
-	mySchemes := make([]struct {
+	mySchemas := make([]struct {
 		Id     int
-		Scheme string
+		Schema string
 		File   string
 	}, 0)
 	rows, err := pool.Query("PRAGMA database_list;")
@@ -283,23 +283,23 @@ func checkAttach(pool connection, dns string, schemes map[string]bool) {
 	currentDb := rx.FindString(dns)
 
 	for rows.Next() {
-		rows.Scan(&myQuery.Id, &myQuery.Scheme, &myQuery.File)
-		mySchemes = append(mySchemes, myQuery)
+		rows.Scan(&myQuery.Id, &myQuery.Schema, &myQuery.File)
+		mySchemas = append(mySchemas, myQuery)
 	}
 
-	schemeBuilders := strings.Builder{}
-	for s := range schemes {
-		if !slices.ContainsFunc(mySchemes, func(mq struct {
+	schemaBuilders := strings.Builder{}
+	for s := range schemas {
+		if !slices.ContainsFunc(mySchemas, func(mq struct {
 			Id     int
-			Scheme string
+			Schema string
 			File   string
 		}) bool {
-			return s[1:len(s)-1] == mq.Scheme
+			return s[1:len(s)-1] == mq.Schema
 		}) {
-			schemeBuilders.WriteString(fmt.Sprintf("ATTACH DATABASE '%v' AS %v;\n", strings.Replace(dns, currentDb, s[1:len(s)-1]+".db", 1), s))
+			schemaBuilders.WriteString(fmt.Sprintf("ATTACH DATABASE '%v' AS %v;\n", strings.Replace(dns, currentDb, s[1:len(s)-1]+".db", 1), s))
 		}
 	}
-	if schemeBuilders.Len() != 0 {
-		pool.Exec(schemeBuilders.String())
+	if schemaBuilders.Len() != 0 {
+		pool.Exec(schemaBuilders.String())
 	}
 }
