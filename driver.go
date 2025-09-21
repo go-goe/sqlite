@@ -22,6 +22,7 @@ func (d *Driver) GetDatabaseConfig() *goe.DatabaseConfig {
 
 type Config struct {
 	goe.DatabaseConfig
+	MigratePath string // output sql file, if defined the driver will not auto apply the migration
 }
 
 func Open(dns string, config Config) (driver *Driver) {

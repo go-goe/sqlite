@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,13 +91,29 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 }
 
 func (db *Driver) rawExecContext(ctx context.Context, rawSql string, args ...any) error {
-	query := model.Query{Type: enum.RawQuery, RawSql: rawSql, Arguments: args}
-	query.Header.Err = wrapperExec(ctx, db.NewConnection(), &query)
-	if query.Header.Err != nil {
-		return db.GetDatabaseConfig().ErrorQueryHandler(ctx, query)
+	if db.Config.MigratePath == "" {
+		query := model.Query{Type: enum.RawQuery, RawSql: rawSql, Arguments: args}
+		query.Header.Err = wrapperExec(ctx, db.NewConnection(), &query)
+		if query.Header.Err != nil {
+			return db.GetDatabaseConfig().ErrorQueryHandler(ctx, query)
+		}
+		db.GetDatabaseConfig().InfoHandler(ctx, query)
+		return nil
 	}
-	db.GetDatabaseConfig().InfoHandler(ctx, query)
-	return nil
+	root, err := os.OpenRoot(db.Config.MigratePath)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	file, err := root.OpenFile(db.Name()+"_"+strconv.FormatInt(time.Now().Unix(), 10)+".sql", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	_, err = file.WriteString(rawSql)
+	return err
 }
 
 func wrapperExec(ctx context.Context, conn goe.Connection, query *model.Query) error {
