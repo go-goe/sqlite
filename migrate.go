@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -42,19 +41,6 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 
 	sql := new(strings.Builder)
 	var err error
-	rx := regexp.MustCompile(`[^/]+\.db`)
-	currentDb := rx.FindString(db.dns)
-	for _, s := range migrator.Schemas {
-		sql.WriteString(fmt.Sprintf("ATTACH DATABASE '%v' AS %v;\n", strings.Replace(db.dns, currentDb, s[1:len(s)-1]+".db", 1), s))
-	}
-	// attach all databases to connection
-	if sql.Len() != 0 {
-		err = db.rawExecContext(ctx, sql.String())
-		if err != nil {
-			return err
-		}
-	}
-	sql.Reset()
 
 	sqlColumns := new(strings.Builder)
 	for _, t := range migrator.Tables {

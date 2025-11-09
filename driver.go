@@ -3,11 +3,15 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
+	"regexp"
+	"strings"
+	"sync"
 
 	"github.com/go-goe/goe"
 	"github.com/go-goe/goe/model"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 type Driver struct {
@@ -20,11 +24,32 @@ func (d *Driver) GetDatabaseConfig() *goe.DatabaseConfig {
 	return &d.Config.DatabaseConfig
 }
 
-type Config struct {
-	goe.DatabaseConfig
-	MigratePath string // output sql file, if defined the driver will not auto apply the migration
+type ExecQuerierContext interface {
+	driver.ExecerContext
+	driver.QueryerContext
 }
 
+type ConnectionHook func(
+	conn ExecQuerierContext,
+	dsn string,
+) error
+
+type Config struct {
+	goe.DatabaseConfig
+	MigratePath    string         // output sql file, if defined the driver will not auto apply the migration.
+	ConnectionHook ConnectionHook // ConnectionHook is called after each connection is opened.
+}
+
+var lock = struct {
+	sync.Mutex
+}{sync.Mutex{}}
+
+// OpenInMemory opens a in memory database.
+func OpenInMemory(config Config) (driver *Driver) {
+	return Open("file:goe?mode=memory&cache=shared", config)
+}
+
+// Open opens a sqlite connection. By default uses "PRAGMA foreign_keys = ON;" and "PRAGMA busy_timeout = 5000;".
 func Open(dns string, config Config) (driver *Driver) {
 	return &Driver{
 		dns:    dns,
@@ -33,14 +58,59 @@ func Open(dns string, config Config) (driver *Driver) {
 }
 
 func (dr *Driver) Init() error {
-	var err error
-	dr.sql, err = sql.Open("sqlite", dr.dns)
-	if err != nil {
-		// logged by goe
-		return err
-	}
+	dr.DatabaseConfig.SetInitCallback(func() error {
+		lock.Lock()
+		defer lock.Unlock()
+		var err error
+		dr.setHooks()
+		dr.sql, err = sql.Open("sqlite", dr.dns)
+		if err != nil {
+			// logged by goe
+			return err
+		}
 
-	return dr.sql.Ping()
+		return dr.sql.Ping()
+	})
+	return nil
+}
+
+func (dr *Driver) setHooks() {
+	sqlite.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, dsn string) error {
+		conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON;", nil)
+		conn.ExecContext(context.Background(), "PRAGMA busy_timeout = 5000;", nil)
+		return nil
+	})
+	sqlite.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, dsn string) error {
+		return dr.ConnectionHook(conn, dsn)
+	})
+	schemas := dr.Schemas()
+	dns, params, _ := strings.Cut(dr.dns, "?")
+	if len(schemas) != 0 {
+		rx := regexp.MustCompile(`([^/]+?)(?:\.[a-zA-Z0-9]+)?$`)
+		currentDb := rx.FindString(dns)
+		currentDb = strings.TrimPrefix(currentDb, "file:")
+		ex, ok := strings.CutPrefix(currentDb, ".")
+		if !ok {
+			ex = ""
+		}
+		schemaBuilder := strings.Builder{}
+
+		for _, schema := range schemas {
+			schemaBuilder.WriteString(
+				fmt.Sprintf("ATTACH DATABASE '%v' AS %v;\n",
+					strings.Replace(dns, currentDb, schema[1:len(schema)-1]+ex, 1)+func() string {
+						if params != "" {
+							return "?" + params
+						}
+						return ""
+					}(),
+					schema))
+		}
+		sqlite.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, dsn string) error {
+			conn.ExecContext(context.Background(), schemaBuilder.String(), nil)
+			return nil
+		})
+	}
 }
 
 func (dr *Driver) KeywordHandler(s string) string {
@@ -63,6 +133,34 @@ func (dr *Driver) Close() error {
 	return dr.sql.Close()
 }
 
+var errMap = map[int]error{
+	1555: goe.ErrPrimaryKey,
+	2067: goe.ErrUnique,
+	787:  goe.ErrForeignKey,
+}
+
+type wrapErrors struct {
+	msg  string
+	errs []error
+}
+
+func (e *wrapErrors) Error() string {
+	return "goe: " + e.msg
+}
+
+func (e *wrapErrors) Unwrap() []error {
+	return e.errs
+}
+
+func (dr *Driver) ErrorTranslator() func(err error) error {
+	return func(err error) error {
+		if sqliteError, ok := err.(*sqlite.Error); ok {
+			return &wrapErrors{msg: err.Error(), errs: []error{errMap[sqliteError.Code()], err}}
+		}
+		return err
+	}
+}
+
 func (dr *Driver) NewConnection() goe.Connection {
 	return Connection{sql: dr.sql, config: dr.Config, dns: dr.dns}
 }
@@ -74,20 +172,20 @@ type Connection struct {
 }
 
 func (c Connection) QueryContext(ctx context.Context, query *model.Query) (goe.Rows, error) {
-	buildSql(query, c.sql, c.dns)
+	buildSql(query)
 	rows, err := c.sql.QueryContext(ctx, query.RawSql, query.Arguments...)
 	return Rows{rows: rows}, err
 }
 
 func (c Connection) QueryRowContext(ctx context.Context, query *model.Query) goe.Row {
-	buildSql(query, c.sql, c.dns)
+	buildSql(query)
 	row := c.sql.QueryRowContext(ctx, query.RawSql, query.Arguments...)
 
 	return Row{row: row}
 }
 
 func (c Connection) ExecContext(ctx context.Context, query *model.Query) error {
-	buildSql(query, c.sql, c.dns)
+	buildSql(query)
 	_, err := c.sql.ExecContext(ctx, query.RawSql, query.Arguments...)
 
 	return err
@@ -105,18 +203,18 @@ type Transaction struct {
 }
 
 func (t Transaction) QueryContext(ctx context.Context, query *model.Query) (goe.Rows, error) {
-	buildSql(query, t.tx, t.dns)
+	buildSql(query)
 	rows, err := t.tx.QueryContext(ctx, query.RawSql, query.Arguments...)
 	return Rows{rows: rows}, err
 }
 
 func (t Transaction) QueryRowContext(ctx context.Context, query *model.Query) goe.Row {
-	buildSql(query, t.tx, t.dns)
+	buildSql(query)
 	return Row{row: t.tx.QueryRowContext(ctx, query.RawSql, query.Arguments...)}
 }
 
 func (t Transaction) ExecContext(ctx context.Context, query *model.Query) error {
-	buildSql(query, t.tx, t.dns)
+	buildSql(query)
 	_, err := t.tx.ExecContext(ctx, query.RawSql, query.Arguments...)
 
 	return err

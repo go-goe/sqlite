@@ -53,23 +53,20 @@ type connection interface {
 	Exec(string, ...any) (sql.Result, error)
 }
 
-func buildSql(query *model.Query, pool connection, dns string) {
-	schemas := make(map[string]bool, 0)
+func buildSql(query *model.Query) {
 	switch query.Type {
 	case enum.SelectQuery:
-		query.RawSql = buildSelect(query, &schemas)
+		query.RawSql = buildSelect(query)
 	case enum.InsertQuery:
-		query.RawSql = buildInsert(query, &schemas)
+		query.RawSql = buildInsert(query)
 	case enum.UpdateQuery:
-		query.RawSql = buildUpdate(query, &schemas)
+		query.RawSql = buildUpdate(query)
 	case enum.DeleteQuery:
-		query.RawSql = buildDelete(query, &schemas)
+		query.RawSql = buildDelete(query)
 	}
-
-	checkAttach(pool, dns, schemas)
 }
 
-func buildSelect(query *model.Query, schemas *map[string]bool) string {
+func buildSelect(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("SELECT")
@@ -82,15 +79,9 @@ func buildSelect(query *model.Query, schemas *map[string]bool) string {
 
 	builder.WriteString("FROM")
 	builder.WriteString(query.Tables[0].String())
-	if query.Tables[0].Schema != nil && !(*schemas)[*query.Tables[0].Schema] {
-		(*schemas)[*query.Tables[0].Schema] = true
-	}
 	for _, t := range query.Tables[1:] {
 		builder.WriteByte(',')
 		builder.WriteString(t.String())
-		if t.Schema != nil && !(*schemas)[*t.Schema] {
-			(*schemas)[*t.Schema] = true
-		}
 	}
 
 	for _, j := range query.Joins {
@@ -101,12 +92,9 @@ func buildSelect(query *model.Query, schemas *map[string]bool) string {
 				(j.FirstArgument.Table + "." + j.FirstArgument.Name) + " = " +
 				(j.SecondArgument.Table + "." + j.SecondArgument.Name) + ")",
 		)
-		if j.Table.Schema != nil && !(*schemas)[*j.Table.Schema] {
-			(*schemas)[*j.Table.Schema] = true
-		}
 	}
 
-	writeWhere(query, &builder, schemas)
+	writeWhere(query, &builder)
 
 	if query.OrderBy != nil {
 		builder.WriteByte('\n')
@@ -129,15 +117,12 @@ func buildSelect(query *model.Query, schemas *map[string]bool) string {
 	return builder.String()
 }
 
-func buildInsert(query *model.Query, schemas *map[string]bool) string {
+func buildInsert(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("INSERT INTO")
 	builder.WriteString(query.Tables[0].String())
 	builder.WriteByte('(')
-	if query.Tables[0].Schema != nil && !(*schemas)[*query.Tables[0].Schema] {
-		(*schemas)[*query.Tables[0].Schema] = true
-	}
 
 	builder.WriteString(query.Attributes[0].Name)
 	for _, att := range query.Attributes[1:] {
@@ -174,15 +159,12 @@ func buildInsert(query *model.Query, schemas *map[string]bool) string {
 	return builder.String()
 }
 
-func buildUpdate(query *model.Query, schemas *map[string]bool) string {
+func buildUpdate(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("UPDATE")
 	builder.WriteString(query.Tables[0].String())
 	builder.WriteString("SET")
-	if query.Tables[0].Schema != nil && !(*schemas)[*query.Tables[0].Schema] {
-		(*schemas)[*query.Tables[0].Schema] = true
-	}
 
 	i := 1
 	builder.WriteString(query.Attributes[0].Name + "=$" + strconv.Itoa(i))
@@ -191,20 +173,17 @@ func buildUpdate(query *model.Query, schemas *map[string]bool) string {
 		builder.WriteString("," + att.Name + "=$" + strconv.Itoa(i))
 	}
 
-	writeWhere(query, &builder, schemas)
+	writeWhere(query, &builder)
 
 	return builder.String()
 }
 
-func buildDelete(query *model.Query, schemas *map[string]bool) string {
+func buildDelete(query *model.Query) string {
 	builder := strings.Builder{}
 
 	builder.WriteString("DELETE FROM")
 	builder.WriteString(query.Tables[0].String())
-	if query.Tables[0].Schema != nil && !(*schemas)[*query.Tables[0].Schema] {
-		(*schemas)[*query.Tables[0].Schema] = true
-	}
-	writeWhere(query, &builder, schemas)
+	writeWhere(query, &builder)
 
 	return builder.String()
 }
@@ -221,7 +200,7 @@ func writeAttributes(a model.Attribute) string {
 	return a.Table + "." + a.Name
 }
 
-func writeWhere(query *model.Query, builder *strings.Builder, schema *map[string]bool) {
+func writeWhere(query *model.Query, builder *strings.Builder) {
 	if query.WhereOperations != nil {
 		builder.WriteByte('\n')
 		builder.WriteString("WHERE")
@@ -240,11 +219,11 @@ func writeWhere(query *model.Query, builder *strings.Builder, schema *map[string
 					if w.QueryIn.Arguments != nil {
 						w.QueryIn.WhereIndex = query.WhereIndex
 						query.Arguments = append(query.Arguments[:w.QueryIn.WhereIndex-1], append(w.QueryIn.Arguments, query.Arguments[w.QueryIn.WhereIndex-1:]...)...)
-						builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn, schema) + ")")
+						builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn) + ")")
 						query.WhereIndex = w.QueryIn.WhereIndex
 						continue
 					}
-					builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn, schema) + ")")
+					builder.WriteString(writeAttributes(w.Attribute) + " " + operators[w.Operator] + " (" + buildSelect(w.QueryIn) + ")")
 					continue
 				}
 				writeWhereInArgument(&w, builder, query)
