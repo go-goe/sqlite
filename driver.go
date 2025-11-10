@@ -133,10 +133,10 @@ func (dr *Driver) Close() error {
 	return dr.sql.Close()
 }
 
-var errMap = map[int]error{
-	1555: goe.ErrPrimaryKey,
-	2067: goe.ErrUnique,
-	787:  goe.ErrForeignKey,
+var errMap = map[int][]error{
+	1555: {goe.ErrBadRequest, goe.ErrUniqueValue},
+	2067: {goe.ErrBadRequest, goe.ErrUniqueValue},
+	787:  {goe.ErrBadRequest, goe.ErrForeignKey},
 }
 
 type wrapErrors struct {
@@ -155,7 +155,7 @@ func (e *wrapErrors) Unwrap() []error {
 func (dr *Driver) ErrorTranslator() func(err error) error {
 	return func(err error) error {
 		if sqliteError, ok := err.(*sqlite.Error); ok {
-			return &wrapErrors{msg: err.Error(), errs: []error{errMap[sqliteError.Code()], err}}
+			return &wrapErrors{msg: err.Error(), errs: append(errMap[sqliteError.Code()], err)}
 		}
 		return err
 	}
