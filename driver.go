@@ -89,9 +89,10 @@ func (dr *Driver) setHooks() {
 		rx := regexp.MustCompile(`([^/]+?)(?:\.[a-zA-Z0-9]+)?$`)
 		currentDb := rx.FindString(dns)
 		currentDb = strings.TrimPrefix(currentDb, "file:")
-		ex, ok := strings.CutPrefix(currentDb, ".")
-		if !ok {
-			ex = ""
+		var ex string
+		ix := strings.Index(currentDb, ".")
+		if ix != -1 {
+			ex = currentDb[ix:]
 		}
 		schemaBuilder := strings.Builder{}
 

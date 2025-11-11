@@ -18,7 +18,7 @@ import (
 type body struct {
 	driver  *Driver
 	table   *goe.TableMigrate
-	dataMap map[string]string
+	dataMap map[string]*dataType
 	sql     *strings.Builder
 	conn    *sql.DB
 	tables  map[string]*goe.TableMigrate
@@ -26,17 +26,19 @@ type body struct {
 }
 
 func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) error {
-	dataMap := map[string]string{
-		"string":    "text",
-		"int16":     "integer",
-		"int32":     "integer",
-		"int64":     "integer",
-		"float32":   "real",
-		"float64":   "real",
-		"[]uint8":   "bytea",
-		"time.Time": "datetime",
-		"bool":      "boolean",
-		"uuid.UUID": "uuid",
+	dataMap := map[string]*dataType{
+		"string":    {"text", "''"},
+		"int16":     {"integer", "0"},
+		"int32":     {"integer", "0"},
+		"int64":     {"integer", "0"},
+		"float32":   {"real", "0"},
+		"float64":   {"real", "0"},
+		"[]uint8":   {"bytea", "X''"},
+		"time.Time": {"datetime", "'0000-01-01'"},
+		"time":      {"datetime", "'0000-01-01'"},
+		"bool":      {"boolean", "false"},
+		"uuid.UUID": {"uuid", "'00000000-0000-0000-0000-000000000000'"},
+		"uuid":      {"uuid", "'00000000-0000-0000-0000-000000000000'"},
 	}
 
 	sql := new(strings.Builder)
@@ -232,14 +234,14 @@ func foreignKeyIsPrimarykey(table *goe.TableMigrate, attName string) bool {
 	})
 }
 
-func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.Builder, tables map[string]*goe.TableMigrate, skipDependency bool) {
+func createTable(tbl *goe.TableMigrate, dataMap map[string]*dataType, sql *strings.Builder, tables map[string]*goe.TableMigrate, skipDependency bool) {
 	t := table{}
 	t.name = fmt.Sprintf("CREATE TABLE %v (", tbl.EscapingTableName())
 	for _, att := range tbl.PrimaryKeys {
 		if primaryKeyIsForeignKey(tbl, att.Name) {
 			continue
 		}
-		att.DataType = checkDataType(att.DataType, dataMap)
+		att.DataType = checkDataType(att.DataType, dataMap).typeName
 		if att.AutoIncrement {
 			t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v NOT NULL,", att.EscapingName, att.DataType))
 		} else {
@@ -248,7 +250,7 @@ func createTable(tbl *goe.TableMigrate, dataMap map[string]string, sql *strings.
 	}
 
 	for _, att := range tbl.Attributes {
-		att.DataType = checkDataType(att.DataType, dataMap)
+		att.DataType = checkDataType(att.DataType, dataMap).typeName
 		t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v %v %v,", att.EscapingName, att.DataType, func() string {
 			if att.Nullable {
 				return "NULL"
@@ -299,8 +301,8 @@ func setDefault(d string) string {
 	return fmt.Sprintf("DEFAULT %v", d)
 }
 
-func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]string) string {
-	att.DataType = checkDataType(att.DataType, dataMap)
+func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]*dataType) string {
+	att.DataType = checkDataType(att.DataType, dataMap).typeName
 	return fmt.Sprintf("%v %v %v REFERENCES %v(%v),", att.EscapingName, att.DataType, func() string {
 		if att.Nullable {
 			return "NULL"
@@ -309,8 +311,8 @@ func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]string) strin
 	}(), att.EscapingTargetTable, att.EscapingTargetColumn)
 }
 
-func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]string) string {
-	att.DataType = checkDataType(att.DataType, dataMap)
+func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]*dataType) string {
+	att.DataType = checkDataType(att.DataType, dataMap).typeName
 	return fmt.Sprintf("%v %v UNIQUE %v REFERENCES %v(%v),",
 		att.EscapingName,
 		att.DataType,
@@ -451,7 +453,7 @@ func checkFields(b body) error {
 				continue
 			}
 
-			dataType := checkDataType(att.DataType, b.dataMap)
+			dataType := checkDataType(att.DataType, b.dataMap).typeName
 			if column.dataType != dataType {
 				return alterSqlite(b)
 			}
@@ -496,14 +498,14 @@ func checkFields(b body) error {
 		if column, exist := b.dbTable.columns[att.Name]; exist {
 			column.migrated = true
 			dataType := checkDataType(att.DataType, b.dataMap)
-			if column.dataType != dataType {
-
+			if column.dataType != dataType.typeName {
 				return alterSqlite(b)
 			}
 			if column.nullable != att.Nullable {
 				return alterSqlite(b)
 			}
-			if column.defaultValue != nil {
+			// sqlite new columns has default as zero value
+			if column.defaultValue != nil && *column.defaultValue != dataType.zeroValue {
 				if att.Default == "" {
 					// drop default
 					return alterSqlite(b)
@@ -513,9 +515,15 @@ func checkFields(b body) error {
 					return alterSqlite(b)
 				}
 			}
-			if att.Default != "" && column.defaultValue == nil {
-				// create default
-				return alterSqlite(b)
+			if att.Default != "" {
+				if column.defaultValue == nil {
+					// create default
+					return alterSqlite(b)
+				}
+				if *column.defaultValue == dataType.zeroValue {
+					// create default
+					return alterSqlite(b)
+				}
 			}
 			continue
 		}
@@ -590,7 +598,7 @@ func tableAttributes(t *goe.TableMigrate, conn *sql.DB, tableName string) (strin
 			oldColumn += "," + c
 		}
 
-		return oldColumn, oldColumn
+		return newColumns, oldColumn
 	}
 
 	return newColumns, newColumns
@@ -631,27 +639,50 @@ func checkFkUnique(conn *sql.DB, table, attribute string) bool {
 	return b
 }
 
-func addColumn(table *goe.TableMigrate, column, dataType string, nullable bool) string {
-	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v %v;\n", table.EscapingTableName(), column, dataType,
-		func() string {
-			if nullable {
-				return "NULL"
-			}
-			return "NOT NULL"
-		}())
+func addColumn(table *goe.TableMigrate, column string, dataType dataType, nullable bool) string {
+	if nullable {
+		return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v NULL;\n", table.EscapingTableName(), column, dataType.typeName)
+	}
+	return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v NOT NULL DEFAULT %v;\n", table.EscapingTableName(), column, dataType.typeName, dataType.zeroValue)
 }
 
-func checkDataType(structDataType string, dataMap map[string]string) string {
+type dataType struct {
+	typeName  string
+	zeroValue string
+}
+
+func checkDataType(structDataType string, dataMap map[string]*dataType) dataType {
+	dt := dataType{typeName: structDataType}
 	switch structDataType {
 	case "int8", "uint8", "uint16":
-		structDataType = "int16"
+		dt = dataType{"int16", "0"}
 	case "int", "uint", "uint32":
-		structDataType = "int32"
+		dt = dataType{"int32", "0"}
 	case "uint64":
-		structDataType = "int64"
+		dt = dataType{"int64", "0"}
 	}
-	if dataMap[structDataType] != "" {
-		structDataType = dataMap[structDataType]
+
+	if dataMap[dt.typeName] != nil {
+		return *dataMap[dt.typeName]
 	}
-	return structDataType
+
+	for _, s := range []string{"number", "numeric", "decimal"} {
+		if strings.Contains(strings.ToLower(structDataType), s) {
+			return dataType{structDataType, "0"}
+		}
+	}
+
+	for _, s := range []string{"date", "time"} {
+		if strings.Contains(strings.ToLower(structDataType), s) {
+			return dataType{structDataType, "0000-01-01"}
+		}
+	}
+
+	for _, s := range []string{"char", "varchar", "text"} {
+		if strings.Contains(strings.ToLower(structDataType), s) {
+			return dataType{structDataType, "''"}
+		}
+	}
+
+	return dt
 }
