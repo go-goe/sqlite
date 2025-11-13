@@ -35,10 +35,8 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) er
 		"float64":   {"real", "0"},
 		"[]uint8":   {"bytea", "X''"},
 		"time.Time": {"datetime", "'0000-01-01'"},
-		"time":      {"datetime", "'0000-01-01'"},
 		"bool":      {"boolean", "false"},
 		"uuid.UUID": {"uuid", "'00000000-0000-0000-0000-000000000000'"},
-		"uuid":      {"uuid", "'00000000-0000-0000-0000-000000000000'"},
 	}
 
 	sql := new(strings.Builder)
