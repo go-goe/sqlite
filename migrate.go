@@ -244,7 +244,7 @@ func createTable(tbl *goe.TableMigrate, dataMap map[string]*dataType, sql *strin
 		if att.AutoIncrement {
 			t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v NOT NULL,", att.EscapingName, att.DataType))
 		} else {
-			t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v NOT NULL,", att.EscapingName, att.DataType))
+			t.createAttrs = append(t.createAttrs, fmt.Sprintf("%v %v NOT NULL %v,", att.EscapingName, att.DataType, setDefault(att.Default)))
 		}
 	}
 
@@ -455,6 +455,23 @@ func checkFields(b body) {
 
 			dataType := checkDataType(att.DataType, b.dataMap).typeName
 			if column.dataType != dataType {
+				alter = true
+				break
+			}
+			if !att.AutoIncrement && column.defaultValue != nil {
+				if att.Default == "" {
+					// drop default
+					alter = true
+					break
+				}
+				if *column.defaultValue != att.Default {
+					// update default
+					alter = true
+					break
+				}
+			}
+			if att.Default != "" && column.defaultValue == nil {
+				// create default
 				alter = true
 				break
 			}
