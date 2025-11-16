@@ -20,7 +20,7 @@ type Driver struct {
 	Config
 }
 
-func (d *Driver) GetDatabaseConfig() *goe.DatabaseConfig {
+func (d *Driver) GetDatabaseConfig() *model.DatabaseConfig {
 	return &d.Config.DatabaseConfig
 }
 
@@ -35,7 +35,7 @@ type ConnectionHook func(
 ) error
 
 type Config struct {
-	goe.DatabaseConfig
+	model.DatabaseConfig
 	MigratePath    string         // output sql file, if defined the driver will not auto apply the migration.
 	ConnectionHook ConnectionHook // ConnectionHook is called after each connection is opened.
 }
@@ -162,7 +162,7 @@ func (dr *Driver) ErrorTranslator() func(err error) error {
 	}
 }
 
-func (dr *Driver) NewConnection() goe.Connection {
+func (dr *Driver) NewConnection() model.Connection {
 	return Connection{sql: dr.sql, config: dr.Config, dns: dr.dns}
 }
 
@@ -172,13 +172,13 @@ type Connection struct {
 	sql    *sql.DB
 }
 
-func (c Connection) QueryContext(ctx context.Context, query *model.Query) (goe.Rows, error) {
+func (c Connection) QueryContext(ctx context.Context, query *model.Query) (model.Rows, error) {
 	buildSql(query)
 	rows, err := c.sql.QueryContext(ctx, query.RawSql, query.Arguments...)
 	return Rows{rows: rows}, err
 }
 
-func (c Connection) QueryRowContext(ctx context.Context, query *model.Query) goe.Row {
+func (c Connection) QueryRowContext(ctx context.Context, query *model.Query) model.Row {
 	buildSql(query)
 	row := c.sql.QueryRowContext(ctx, query.RawSql, query.Arguments...)
 
@@ -192,7 +192,7 @@ func (c Connection) ExecContext(ctx context.Context, query *model.Query) error {
 	return err
 }
 
-func (dr *Driver) NewTransaction(ctx context.Context, opts *sql.TxOptions) (goe.Transaction, error) {
+func (dr *Driver) NewTransaction(ctx context.Context, opts *sql.TxOptions) (model.Transaction, error) {
 	tx, err := dr.sql.BeginTx(ctx, opts)
 	return Transaction{tx: tx, config: dr.Config, dns: dr.dns}, err
 }
@@ -203,13 +203,13 @@ type Transaction struct {
 	tx     *sql.Tx
 }
 
-func (t Transaction) QueryContext(ctx context.Context, query *model.Query) (goe.Rows, error) {
+func (t Transaction) QueryContext(ctx context.Context, query *model.Query) (model.Rows, error) {
 	buildSql(query)
 	rows, err := t.tx.QueryContext(ctx, query.RawSql, query.Arguments...)
 	return Rows{rows: rows}, err
 }
 
-func (t Transaction) QueryRowContext(ctx context.Context, query *model.Query) goe.Row {
+func (t Transaction) QueryRowContext(ctx context.Context, query *model.Query) model.Row {
 	buildSql(query)
 	return Row{row: t.tx.QueryRowContext(ctx, query.RawSql, query.Arguments...)}
 }

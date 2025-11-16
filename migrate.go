@@ -10,22 +10,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-goe/goe"
 	"github.com/go-goe/goe/enum"
 	"github.com/go-goe/goe/model"
 )
 
 type body struct {
 	driver  *Driver
-	table   *goe.TableMigrate
+	table   *model.TableMigrate
 	dataMap map[string]*dataType
 	sql     *strings.Builder
 	conn    *sql.DB
-	tables  map[string]*goe.TableMigrate
+	tables  map[string]*model.TableMigrate
 	dbTable
 }
 
-func (db *Driver) MigrateContext(ctx context.Context, migrator *goe.Migrator) error {
+func (db *Driver) MigrateContext(ctx context.Context, migrator *model.Migrator) error {
 	dataMap := map[string]*dataType{
 		"string":    {"text", "''"},
 		"int16":     {"integer", "0"},
@@ -102,7 +101,7 @@ func (db *Driver) rawExecContext(ctx context.Context, rawSql string, args ...any
 	return err
 }
 
-func wrapperExec(ctx context.Context, conn goe.Connection, query *model.Query) error {
+func wrapperExec(ctx context.Context, conn model.Connection, query *model.Query) error {
 	queryStart := time.Now()
 	defer func() { query.Header.QueryDuration = time.Since(queryStart) }()
 	return conn.ExecContext(ctx, query)
@@ -219,21 +218,21 @@ func checkTableChanges(b body) error {
 	return nil
 }
 
-func primaryKeyIsForeignKey(table *goe.TableMigrate, attName string) bool {
-	return slices.ContainsFunc(table.ManyToOnes, func(m goe.ManyToOneMigrate) bool {
+func primaryKeyIsForeignKey(table *model.TableMigrate, attName string) bool {
+	return slices.ContainsFunc(table.ManyToOnes, func(m model.ManyToOneMigrate) bool {
 		return m.Name == attName
-	}) || slices.ContainsFunc(table.OneToOnes, func(o goe.OneToOneMigrate) bool {
+	}) || slices.ContainsFunc(table.OneToOnes, func(o model.OneToOneMigrate) bool {
 		return o.Name == attName
 	})
 }
 
-func foreignKeyIsPrimarykey(table *goe.TableMigrate, attName string) bool {
-	return slices.ContainsFunc(table.PrimaryKeys, func(pk goe.PrimaryKeyMigrate) bool {
+func foreignKeyIsPrimarykey(table *model.TableMigrate, attName string) bool {
+	return slices.ContainsFunc(table.PrimaryKeys, func(pk model.PrimaryKeyMigrate) bool {
 		return pk.Name == attName
 	})
 }
 
-func createTable(tbl *goe.TableMigrate, dataMap map[string]*dataType, sql *strings.Builder, tables map[string]*goe.TableMigrate, skipDependency bool) {
+func createTable(tbl *model.TableMigrate, dataMap map[string]*dataType, sql *strings.Builder, tables map[string]*model.TableMigrate, skipDependency bool) {
 	t := table{}
 	t.name = fmt.Sprintf("CREATE TABLE %v (", tbl.EscapingTableName())
 	for _, att := range tbl.PrimaryKeys {
@@ -300,7 +299,7 @@ func setDefault(d string) string {
 	return fmt.Sprintf("DEFAULT %v", d)
 }
 
-func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]*dataType) string {
+func foreingManyToOne(att model.ManyToOneMigrate, dataMap map[string]*dataType) string {
 	att.DataType = checkDataType(att.DataType, dataMap).typeName
 	return fmt.Sprintf("%v %v %v REFERENCES %v(%v),", att.EscapingName, att.DataType, func() string {
 		if att.Nullable {
@@ -310,7 +309,7 @@ func foreingManyToOne(att goe.ManyToOneMigrate, dataMap map[string]*dataType) st
 	}(), att.EscapingTargetTable, att.EscapingTargetColumn)
 }
 
-func foreingOneToOne(att goe.OneToOneMigrate, dataMap map[string]*dataType) string {
+func foreingOneToOne(att model.OneToOneMigrate, dataMap map[string]*dataType) string {
 	att.DataType = checkDataType(att.DataType, dataMap).typeName
 	return fmt.Sprintf("%v %v UNIQUE %v REFERENCES %v(%v),",
 		att.EscapingName,
@@ -337,7 +336,7 @@ type databaseIndex struct {
 	migrated  bool
 }
 
-func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *strings.Builder, conn *sql.DB) error {
+func checkIndex(indexes []model.IndexMigrate, table *model.TableMigrate, sql *strings.Builder, conn *sql.DB) error {
 
 	var schema string
 	if table.Schema != nil {
@@ -409,7 +408,7 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 
 	for _, dbIndex := range dis {
 		if !dbIndex.migrated {
-			if !slices.ContainsFunc(table.OneToOnes, func(o goe.OneToOneMigrate) bool {
+			if !slices.ContainsFunc(table.OneToOnes, func(o model.OneToOneMigrate) bool {
 				return o.Name == dbIndex.attname
 			}) {
 				sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", keywordHandler(dbIndex.indexName)) + "\n")
@@ -419,7 +418,7 @@ func checkIndex(indexes []goe.IndexMigrate, table *goe.TableMigrate, sql *string
 	return nil
 }
 
-func createIndex(index goe.IndexMigrate, table *goe.TableMigrate) string {
+func createIndex(index model.IndexMigrate, table *model.TableMigrate) string {
 	return fmt.Sprintf("CREATE %v %v ON %v (%v);\n",
 		func() string {
 			if index.Unique {
@@ -587,7 +586,7 @@ func alterSqlite(b body) {
 	b.sql.WriteString(sqlBuilder.String())
 }
 
-func tableAttributes(t *goe.TableMigrate) (string, string) {
+func tableAttributes(t *model.TableMigrate) (string, string) {
 	sql := strings.Builder{}
 	sql.WriteString(t.PrimaryKeys[0].EscapingName)
 	for _, p := range t.PrimaryKeys[1:] {
@@ -638,7 +637,7 @@ func checkFkUnique(conn *sql.DB, table, attribute string) bool {
 	return b
 }
 
-func addColumn(table *goe.TableMigrate, column string, dataType dataType, nullable bool) string {
+func addColumn(table *model.TableMigrate, column string, dataType dataType, nullable bool) string {
 	if nullable {
 		return fmt.Sprintf("ALTER TABLE %v ADD COLUMN %v %v NULL;\n", table.EscapingTableName(), column, dataType.typeName)
 	}
