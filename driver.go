@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-goe/goe"
 	"github.com/go-goe/goe/model"
@@ -17,11 +18,11 @@ import (
 type Driver struct {
 	dns string
 	sql *sql.DB
-	Config
+	config
 }
 
 func (d *Driver) GetDatabaseConfig() *model.DatabaseConfig {
-	return &d.Config.DatabaseConfig
+	return &d.config.DatabaseConfig
 }
 
 type ExecQuerierContext interface {
@@ -34,10 +35,31 @@ type ConnectionHook func(
 	dsn string,
 ) error
 
-type Config struct {
+type config struct {
 	model.DatabaseConfig
+	MigratePath    string
+	ConnectionHook ConnectionHook
+}
+
+type Config struct {
+	Logger           model.Logger
+	IncludeArguments bool          // include all arguments used on query
+	QueryThreshold   time.Duration // query threshold to warning on slow queries
+
 	MigratePath    string         // output sql file, if defined the driver will not auto apply the migration.
 	ConnectionHook ConnectionHook // ConnectionHook is called after each connection is opened.
+}
+
+func NewConfig(c Config) config {
+	return config{
+		DatabaseConfig: model.DatabaseConfig{
+			Logger:           c.Logger,
+			IncludeArguments: c.IncludeArguments,
+			QueryThreshold:   c.QueryThreshold,
+		},
+		MigratePath:    c.MigratePath,
+		ConnectionHook: c.ConnectionHook,
+	}
 }
 
 var lock = struct {
@@ -45,15 +67,15 @@ var lock = struct {
 }{sync.Mutex{}}
 
 // OpenInMemory opens a in memory database.
-func OpenInMemory(config Config) (driver *Driver) {
-	return Open("file:goe?mode=memory&cache=shared", config)
+func OpenInMemory(c config) (driver *Driver) {
+	return Open("file:goe?mode=memory&cache=shared", c)
 }
 
 // Open opens a sqlite connection. By default uses "PRAGMA foreign_keys = ON;" and "PRAGMA busy_timeout = 5000;".
-func Open(dns string, config Config) (driver *Driver) {
+func Open(dns string, c config) (driver *Driver) {
 	return &Driver{
 		dns:    dns,
-		Config: config,
+		config: c,
 	}
 }
 
@@ -163,12 +185,12 @@ func (dr *Driver) ErrorTranslator() func(err error) error {
 }
 
 func (dr *Driver) NewConnection() model.Connection {
-	return Connection{sql: dr.sql, config: dr.Config, dns: dr.dns}
+	return Connection{sql: dr.sql, config: dr.config, dns: dr.dns}
 }
 
 type Connection struct {
 	dns    string
-	config Config
+	config config
 	sql    *sql.DB
 }
 
@@ -194,12 +216,12 @@ func (c Connection) ExecContext(ctx context.Context, query *model.Query) error {
 
 func (dr *Driver) NewTransaction(ctx context.Context, opts *sql.TxOptions) (model.Transaction, error) {
 	tx, err := dr.sql.BeginTx(ctx, opts)
-	return Transaction{tx: tx, config: dr.Config, dns: dr.dns}, err
+	return Transaction{tx: tx, config: dr.config, dns: dr.dns}, err
 }
 
 type Transaction struct {
 	dns    string
-	config Config
+	config config
 	tx     *sql.Tx
 }
 

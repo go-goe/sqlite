@@ -76,7 +76,7 @@ func (db *Driver) MigrateContext(ctx context.Context, migrator *model.Migrator) 
 }
 
 func (db *Driver) rawExecContext(ctx context.Context, rawSql string, args ...any) error {
-	if db.Config.MigratePath == "" {
+	if db.config.MigratePath == "" {
 		query := model.Query{Type: enum.RawQuery, RawSql: rawSql, Arguments: args}
 		query.Header.Err = wrapperExec(ctx, db.NewConnection(), &query)
 		if query.Header.Err != nil {
@@ -85,7 +85,7 @@ func (db *Driver) rawExecContext(ctx context.Context, rawSql string, args ...any
 		db.GetDatabaseConfig().InfoHandler(ctx, query)
 		return nil
 	}
-	root, err := os.OpenRoot(db.Config.MigratePath)
+	root, err := os.OpenRoot(db.config.MigratePath)
 	if err != nil {
 		return err
 	}
