@@ -102,9 +102,11 @@ func (dr *Driver) setHooks() {
 		conn.ExecContext(context.Background(), "PRAGMA busy_timeout = 5000;", nil)
 		return nil
 	})
-	sqlite.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, dsn string) error {
-		return dr.ConnectionHook(conn, dsn)
-	})
+	if dr.ConnectionHook != nil {
+		sqlite.RegisterConnectionHook(func(conn sqlite.ExecQuerierContext, dsn string) error {
+			return dr.ConnectionHook(conn, dsn)
+		})
+	}
 	schemas := dr.Schemas()
 	dns, params, _ := strings.Cut(dr.dns, "?")
 	if len(schemas) != 0 {
