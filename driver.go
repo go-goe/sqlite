@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -225,6 +226,7 @@ type Transaction struct {
 	dns    string
 	config config
 	tx     *sql.Tx
+	saves  int64
 }
 
 func (t Transaction) QueryContext(ctx context.Context, query *model.Query) (model.Rows, error) {
@@ -259,6 +261,40 @@ func (t Transaction) Rollback() error {
 	if err != nil {
 		// goe can't log
 		return t.config.ErrorHandler(context.TODO(), err)
+	}
+	return nil
+}
+
+type SavePoint struct {
+	name string
+	tx   Transaction
+}
+
+func (t Transaction) SavePoint() (model.SavePoint, error) {
+	t.saves++
+	point := "sp_" + strconv.FormatInt(t.saves, 10)
+	_, err := t.tx.Exec("SAVEPOINT " + point)
+	if err != nil {
+		// goe can't log
+		return nil, t.config.ErrorHandler(context.TODO(), err)
+	}
+	return SavePoint{point, t}, nil
+}
+
+func (s SavePoint) Rollback() error {
+	_, err := s.tx.tx.Exec("ROLLBACK TO SAVEPOINT " + s.name)
+	if err != nil {
+		// goe can't log
+		return s.tx.config.ErrorHandler(context.TODO(), err)
+	}
+	return nil
+}
+
+func (s SavePoint) Commit() error {
+	_, err := s.tx.tx.Exec("RELEASE SAVEPOINT " + s.name)
+	if err != nil {
+		// goe can't log
+		return s.tx.config.ErrorHandler(context.TODO(), err)
 	}
 	return nil
 }
