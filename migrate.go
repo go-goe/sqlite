@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -333,6 +334,7 @@ type databaseIndex struct {
 	unique    bool
 	attname   string
 	table     string
+	sql       string
 	migrated  bool
 }
 
@@ -343,31 +345,42 @@ func checkIndex(indexes []model.IndexMigrate, table *model.TableMigrate, sql *st
 		schema = *table.Schema + "."
 	}
 	sqlQuery := fmt.Sprintf(`
-	WITH index_list AS (
-		SELECT
-			name AS index_name,
-			[unique] AS is_unique,
-			origin,
-			partial
-		FROM %vpragma_index_list($1)
-		WHERE origin != 'pk'  -- exclude primary key
-	),
-	index_columns AS (
-		SELECT
+		WITH index_list AS (
+			SELECT
+				name AS index_name,
+				[unique] AS is_unique,
+				origin,
+				partial
+			FROM %vpragma_index_list($1)
+			WHERE origin != 'pk'  -- exclude primary key
+		),
+		index_columns AS (
+			SELECT
+				il.index_name,
+				COALESCE(ii.name, '') AS column_name,
+				ii.seqno
+			FROM index_list il
+			JOIN %vpragma_index_info(il.index_name) ii
+		),
+		index_sql AS (
+			SELECT
+				name AS index_name,
+				sql  AS index_sql
+			FROM %vsqlite_master
+			WHERE type = 'index'
+		)
+		SELECT DISTINCT
 			il.index_name,
-			ii.name AS column_name,
-			ii.seqno
+			il.is_unique,
+			$1 AS table_name,
+			ic.column_name,
+			COALESCE(isql.index_sql, '')
 		FROM index_list il
-		JOIN %vpragma_index_info(il.index_name) ii
-	)
-	SELECT DISTINCT
-		il.index_name,
-		il.is_unique,
-		$1 AS table_name,
-		ic.column_name
-	FROM index_list il
-	JOIN index_columns ic ON il.index_name = ic.index_name;
-	`, schema, schema)
+		JOIN index_columns ic
+			ON il.index_name = ic.index_name
+		LEFT JOIN index_sql isql
+			ON il.index_name = isql.index_name;
+	`, schema, schema, schema)
 
 	rows, err := conn.QueryContext(context.Background(), sqlQuery, table.Name)
 	if err != nil {
@@ -378,7 +391,7 @@ func checkIndex(indexes []model.IndexMigrate, table *model.TableMigrate, sql *st
 	dis := make(map[string]*databaseIndex)
 	di := databaseIndex{}
 	for rows.Next() {
-		err = rows.Scan(&di.indexName, &di.unique, &di.table, &di.attname)
+		err = rows.Scan(&di.indexName, &di.unique, &di.table, &di.attname, &di.sql)
 		if err != nil {
 			return err
 		}
@@ -387,12 +400,20 @@ func checkIndex(indexes []model.IndexMigrate, table *model.TableMigrate, sql *st
 			unique:    di.unique,
 			attname:   di.attname,
 			table:     di.table,
+			sql:       di.sql,
 		}
 	}
 
 	for i := range indexes {
 		if dbIndex, exist := dis[indexes[i].Name]; exist {
 			if indexes[i].Unique != dbIndex.unique {
+				if table.Schema != nil {
+					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", *table.Schema+"."+indexes[i].EscapingName) + "\n")
+				} else {
+					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", indexes[i].EscapingName) + "\n")
+				}
+				sql.WriteString(createIndex(indexes[i], table))
+			} else if indexes[i].Func != "" && !strings.Contains(regexp.MustCompile(`(?:\()[a-z]+`).FindString(dbIndex.sql), indexes[i].Func) {
 				if table.Schema != nil {
 					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", *table.Schema+"."+indexes[i].EscapingName) + "\n")
 				} else {
@@ -434,9 +455,16 @@ func createIndex(index model.IndexMigrate, table *model.TableMigrate) string {
 		}(),
 		table.EscapingName,
 		func() string {
-			s := fmt.Sprintf("%v", index.Attributes[0].EscapingName)
+			var s string
+			if index.Func != "" {
+				s += index.Func + "("
+			}
+			s += fmt.Sprintf("%v", index.Attributes[0].EscapingName)
 			for _, a := range index.Attributes[1:] {
 				s += fmt.Sprintf(",%v", a.EscapingName)
+			}
+			if index.Func != "" {
+				s += ")"
 			}
 			return s
 		}(),
