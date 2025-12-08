@@ -407,18 +407,10 @@ func checkIndex(indexes []model.IndexMigrate, table *model.TableMigrate, sql *st
 	for i := range indexes {
 		if dbIndex, exist := dis[indexes[i].Name]; exist {
 			if indexes[i].Unique != dbIndex.unique {
-				if table.Schema != nil {
-					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", *table.Schema+"."+indexes[i].EscapingName) + "\n")
-				} else {
-					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", indexes[i].EscapingName) + "\n")
-				}
+				sql.WriteString(dropIndex(table, indexes[i].EscapingName))
 				sql.WriteString(createIndex(indexes[i], table))
 			} else if indexes[i].Func != "" && !strings.Contains(regexp.MustCompile(`(?:\()[a-z]+`).FindString(dbIndex.sql), indexes[i].Func) {
-				if table.Schema != nil {
-					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", *table.Schema+"."+indexes[i].EscapingName) + "\n")
-				} else {
-					sql.WriteString(fmt.Sprintf("DROP INDEX IF EXISTS %v;", indexes[i].EscapingName) + "\n")
-				}
+				sql.WriteString(dropIndex(table, indexes[i].EscapingName))
 				sql.WriteString(createIndex(indexes[i], table))
 			}
 			dbIndex.migrated = true
@@ -711,4 +703,11 @@ func checkDataType(structDataType string, dataMap map[string]*dataType) dataType
 	}
 
 	return dt
+}
+
+func dropIndex(table *model.TableMigrate, idxName string) string {
+	if table.Schema != nil {
+		return fmt.Sprintf("DROP INDEX IF EXISTS %v;", *table.Schema+"."+idxName) + "\n"
+	}
+	return fmt.Sprintf("DROP INDEX IF EXISTS %v;", idxName) + "\n"
 }
