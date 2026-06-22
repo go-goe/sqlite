@@ -3,7 +3,7 @@ module github.com/go-goe/sqlite
 go 1.24.0
 
 require (
-	github.com/go-goe/goe v0.7.1
+	github.com/go-goe/goe v0.7.2
 	modernc.org/sqlite v1.40.1
 )
 
